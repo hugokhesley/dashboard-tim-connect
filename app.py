@@ -20,10 +20,10 @@ MAP_STATUS = {
     'CADASTRO': 'PRÉ-VENDA', 'DEVOLVIDOS': 'DEVOLVIDOS'
 }
 
-st.markdown("<style>.stApp { background-color: #0E1117; } .header-premium { background: linear-gradient(90deg, #1E3A8A 0%, #3B82F6 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; } .header-pendente { background-color: #6366F1; } .header-analise { background-color: #F59E0B; } .header-devolvido { background-color: #EF4444; } .header-entrante { background-color: #10B981; }</style>", unsafe_allow_html=True)
+st.markdown("""<style>.stApp { background-color: #0E1117; } .header-premium { background: linear-gradient(90deg, #1E3A8A 0%, #3B82F6 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; } .header-pendente { background-color: #6366F1; } .header-analise { background-color: #F59E0B; } .header-devolvido { background-color: #EF4444; } .header-entrante { background-color: #10B981; }</style>""", unsafe_allow_html=True)
 
 fuso_br = pytz.timezone('America/Sao_Paulo')
-mes_atual_alvo = datetime.now(fuso_br).strftime('%m/%Y')
+mes_atual = datetime.now(fuso_br).strftime('%m/%Y')
 
 arquivos_locais = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and not f.startswith('~$')]
 
@@ -38,12 +38,12 @@ if arquivos_locais:
     with st.sidebar:
         parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].dropna().unique()), default=df['parceiro'].dropna().unique())
         meses_reais = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
-        if mes_atual_alvo not in meses_reais: meses_reais.insert(0, mes_atual_alvo)
-        mes_sel = st.selectbox("Mês de Análise", meses_reais, index=meses_reais.index(mes_atual_alvo) if mes_atual_alvo in meses_reais else 0)
+        if mes_atual not in meses_reais: meses_reais.insert(0, mes_atual)
+        mes_sel = st.selectbox("Mês de Análise", meses_reais, index=meses_reais.index(mes_atual) if mes_atual in meses_reais else 0)
 
     st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
     
-    # META: Rigorosa (Apenas o que ativou no mês selecionado)
+    # 🎯 BARRA DE META: Apenas o que ativou no mês de análise
     df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO')]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
@@ -53,20 +53,15 @@ if arquivos_locais:
 
     st.divider()
     
-    # KANBAN: Regra Safra + Pipeline (Data no mês OU Data Vazia)
-    mask_base = (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO') & (df['parceiro'].isin(parc_sel))
-    mask_data = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
+    # 📊 KANBAN (A LÓGICA EXCEL): Ativados no Mês Selecionado + Vazios (Backlog)
+    # TRAVA: Remove ativações de outros meses que não sejam o 'mes_sel'
+    mask_safra = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
+    mask_base = (df['fila atual'].str.upper() != 'CANCELADO') & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False))
     
-    df_f = df[mask_base & mask_data]
+    df_f = df[mask_safra & mask_base & (df['parceiro'].isin(parc_sel))]
 
+    filas = [{"t":"PENDENTE","s":["PRÉ-VENDA"],"c":"header-pendente"},{"t":"ANÁLISE","s":["EM ANÁLISE","CRÉDITO"],"c":"header-analise"},{"t":"DEVOLVIDOS","s":["DEVOLVIDOS"],"c":"header-devolvido"},{"t":"ENTRANTES","s":["ENTRANTE"],"c":"header-entrante"}]
     cols = st.columns(4)
-    filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente"},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise"},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido"},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante"}
-    ]
-
     for i, f in enumerate(filas):
         with cols[i]:
             df_fila = df_f[df_f['status_dash'].isin(f["s"])]
