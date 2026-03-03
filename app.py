@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
-import pytz
 
 # CONFIGURAÇÃO DE PÁGINA FIXA
 st.set_page_config(page_title="TIM | Vendas Corporate", layout="wide", page_icon="🎯")
 
-# MAPEAMENTO DE STATUS (image_b81348.png)
+# MAPEAMENTO DE STATUS ATUALIZADO (image_b81348.png)
 MAP_STATUS = {
     'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE', 'FIDELIZAÇÃO': 'ENTRANTE',
     'AG. IMPR. DOCs/EXPEDIÇÃO': 'ENTRANTE', 'INCONSISTENCIA': 'ENTRANTE',
@@ -23,7 +22,8 @@ MAP_STATUS = {
 
 st.markdown("""<style>.stApp { background-color: #0E1117; } .header-premium { background: linear-gradient(90deg, #1E3A8A 0%, #3B82F6 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; } .header-pendente { background-color: #6366F1; } .header-analise { background-color: #F59E0B; } .header-devolvido { background-color: #EF4444; } .header-entrante { background-color: #10B981; }</style>""", unsafe_allow_html=True)
 
-MES_PRESENTE = "03/2026" # TRAVA ABSOLUTA NO PRESENTE
+# REGRA DO PRESENTE (MARÇO 2026)
+MES_ALVO = "03/2026"
 
 arquivos_locais = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and not f.startswith('~$')]
 
@@ -34,24 +34,30 @@ if arquivos_locais:
     df['status_dash'] = df['fila atual'].str.strip().str.upper().map(MAP_STATUS).fillna('OUTROS')
     df['data de ativação'] = pd.to_datetime(df['data de ativação'], errors='coerce')
     df['mes_ref_ativa'] = df['data de ativação'].dt.strftime('%m/%Y')
+    
+    # NOVA TRAVA: Coluna de Safra para o Kanban
+    # Pega quem ativou em Março OU quem está vazio MAS foi imputado em Março
+    df['data de input'] = pd.to_datetime(df['data de input'], errors='coerce')
+    df['mes_ref_input'] = df['data de input'].dt.strftime('%m/%Y')
 
     with st.sidebar:
         parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].dropna().unique()), default=df['parceiro'].dropna().unique())
-        st.success(f"📌 Dashboard travado em: {MES_PRESENTE}")
+        st.success(f"Dashboard travado em: {MES_ALVO}")
 
-    # FILTRO DO PRESENTE: (Ativado em Março OU Sem data) E NÃO Cancelado
+    # FILTRO GLOBAL (image_b81348.png)
     mask_presente = (
         (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) &
         (df['fila atual'].str.upper() != 'CANCELADO') &
-        ((df['mes_ref_ativa'] == MES_PRESENTE) | (df['data de ativação'].isna()))
+        (df['parceiro'].isin(parc_sel)) &
+        ((df['mes_ref_ativa'] == MES_ALVO) | (df['data de ativação'].isna() & (df['mes_ref_input'] == MES_ALVO)))
     )
     
-    df_f = df[mask_presente & (df['parceiro'].isin(parc_sel))]
+    df_f = df[mask_presente].copy()
 
-    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Período: {MES_PRESENTE}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Período: {MES_ALVO}</div></div>", unsafe_allow_html=True)
     
-    # META: Apenas Ativados em Março
-    df_meta = df_f[df_f['mes_ref_ativa'] == MES_PRESENTE]
+    # ATINGIMENTO: Apenas o que de fato ativou em Março
+    df_meta = df_f[df_f['mes_ref_ativa'] == MES_ALVO]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
     m1, m2 = st.columns(2)

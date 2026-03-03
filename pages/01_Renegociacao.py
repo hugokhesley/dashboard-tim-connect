@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import os
 from datetime import datetime
 
@@ -20,7 +20,7 @@ MAP_STATUS = {
 
 st.markdown("""<style>.stApp { background-color: #0E1117; } .header-reneg { background: linear-gradient(90deg, #065F46 0%, #059669 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; } .header-pendente { background-color: #6366F1; } .header-analise { background-color: #F59E0B; } .header-devolvido { background-color: #EF4444; } .header-entrante { background-color: #10B981; }</style>""", unsafe_allow_html=True)
 
-MES_PRESENTE = "03/2026"
+MES_ALVO = "03/2026"
 
 arquivos_locais = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and not f.startswith('~$')]
 
@@ -31,26 +31,31 @@ if arquivos_locais:
     df['status_dash'] = df['fila atual'].str.strip().str.upper().map(MAP_STATUS).fillna('OUTROS')
     df['data de ativação'] = pd.to_datetime(df['data de ativação'], errors='coerce')
     df['mes_ref_ativa'] = df['data de ativação'].dt.strftime('%m/%Y')
+    
+    # Trava de Safra
+    df['data de input'] = pd.to_datetime(df['data de input'], errors='coerce')
+    df['mes_ref_input'] = df['data de input'].dt.strftime('%m/%Y')
 
     with st.sidebar:
         parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].dropna().unique()), default=df['parceiro'].dropna().unique())
 
-    # FILTRO RENEG: Reneg + Não Cancelado + (Ativado em Março ou Sem Data)
+    # FILTRO GLOBAL RENEG
     mask_reneg = (
         (df['tipo de contratação'].str.contains('RENEG', case=False, na=False)) &
         (df['fila atual'].str.upper() != 'CANCELADO') &
-        ((df['mes_ref_ativa'] == MES_PRESENTE) | (df['data de ativação'].isna()))
+        (df['parceiro'].isin(parc_sel)) &
+        ((df['mes_ref_ativa'] == MES_ALVO) | (df['data de ativação'].isna() & (df['mes_ref_input'] == MES_ALVO)))
     )
     
-    df_f = df[mask_reneg & (df['parceiro'].isin(parc_sel))]
+    df_f = df[mask_reneg].copy()
 
-    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div>📅 Período: {MES_PRESENTE}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div>📅 Período: {MES_ALVO}</div></div>", unsafe_allow_html=True)
     
-    df_meta = df_f[df_f['mes_ref_ativa'] == MES_PRESENTE]
+    df_meta = df_f[df_f['mes_ref_ativa'] == MES_ALVO]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
     m1, m2 = st.columns(2)
-    m1.metric("Volume Ativo", f"{int(v_real)} / 751", f"{(v_real/751):.1%}")
+    m1.metric("Volume Ativado", f"{int(v_real)} / 751", f"{(v_real/751):.1%}")
     m2.metric("Receita Ativa", f"R$ {r_real:,.2f} / R$ 45,060.00", f"{(r_real/45060):.1%}")
 
     st.divider()
