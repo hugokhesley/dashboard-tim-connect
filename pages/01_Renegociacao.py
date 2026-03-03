@@ -40,12 +40,20 @@ if arquivos_locais:
         if mes_atual not in meses_reais: meses_reais.insert(0, mes_atual)
         mes_sel = st.selectbox("Mês", meses_reais, index=meses_reais.index(mes_atual) if mes_atual in meses_reais else 0)
 
-    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
+    # --- REGRA EXCEL PARA RENEGOCIAÇÃO ---
+    mask_reneg = df['tipo de contratação'].str.contains('RENEG', case=False, na=False)
+    mask_excel_reneg = (
+        (df['mes_ref_ativa'] == mes_sel) | 
+        (df['data de ativação'].isna())
+    ) & (df['fila atual'].str.upper() != 'CANCELADO') & mask_reneg
     
-    # META RENEG (120% de 626 = 751)
-    mask_reneg_tipo = df['tipo de contratação'].str.contains('RENEG', case=False, na=False)
-    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & mask_reneg_tipo & (df['fila atual'].str.upper() != 'CANCELADO')]
-    v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
+    df_filtrado_reneg = df[mask_excel_reneg & (df['parceiro'].isin(parc_sel))]
+
+    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div>📅 Safra Selecionada: {mes_sel}</div></div>", unsafe_allow_html=True)
+    
+    # METRAS (Apenas ativados no mês)
+    df_ativos_reneg = df_filtrado_reneg[df_filtrado_reneg['mes_ref_ativa'] == mes_sel]
+    v_real, r_real = df_ativos_reneg['acessos'].sum(), df_ativos_reneg['preço oferta'].sum()
     
     m1, m2 = st.columns(2)
     m1.metric("Volume Ativo", f"{int(v_real)} / 751", f"{(v_real/751):.1%}")
@@ -53,17 +61,12 @@ if arquivos_locais:
 
     st.divider()
     
-    # KANBAN RENEG (A LÓGICA EXCEL)
-    mask_safra = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
-    mask_base = mask_reneg_tipo & (df['fila atual'].str.upper() != 'CANCELADO')
-    
-    df_f = df[mask_safra & mask_base & (df['parceiro'].isin(parc_sel))]
-
+    # KANBAN
     filas = [{"t":"PENDENTE","s":["PRÉ-VENDA"],"c":"header-pendente"},{"t":"ANÁLISE","s":["EM ANÁLISE","CRÉDITO"],"c":"header-analise"},{"t":"DEVOLVIDOS","s":["DEVOLVIDOS"],"c":"header-devolvido"},{"t":"ENTRANTES","s":["ENTRANTE"],"c":"header-entrante"}]
     cols = st.columns(4)
     for i, f in enumerate(filas):
         with cols[i]:
-            df_fila = df_f[df_f['status_dash'].isin(f["s"])]
+            df_fila = df_filtrado_reneg[df_filtrado_reneg['status_dash'].isin(f["s"])]
             st.markdown(f"<div class='column-header {f['c']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:

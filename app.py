@@ -37,15 +37,28 @@ if arquivos_locais:
 
     with st.sidebar:
         parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].dropna().unique()), default=df['parceiro'].dropna().unique())
+        # Pegamos os meses disponíveis na base para o filtro
         meses_reais = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
         if mes_atual not in meses_reais: meses_reais.insert(0, mes_atual)
         mes_sel = st.selectbox("Mês de Análise", meses_reais, index=meses_reais.index(mes_atual) if mes_atual in meses_reais else 0)
 
-    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
+    # --- A MÁGICA DO EXCEL (FILTRO DATAOK) ---
+    # 1. Pega quem ativou no mês selecionado
+    # 2. OU quem está com a data de ativação VAZIA (tramitando)
+    # 3. MAS EXCLUI quem ativou em outros meses (para não poluir os ENTRANTES)
+    # 4. EXCLUI sempre os CANCELADOS
+    mask_excel = (
+        (df['mes_ref_ativa'] == mes_sel) | 
+        (df['data de ativação'].isna())
+    ) & (df['fila atual'].str.upper() != 'CANCELADO') & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False))
     
-    # 🎯 BARRA DE META: Apenas o que ativou no mês de análise
-    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO')]
-    v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
+    df_filtrado = df[mask_excel & (df['parceiro'].isin(parc_sel))]
+
+    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Safra Selecionada: {mes_sel}</div></div>", unsafe_allow_html=True)
+    
+    # MÉTRICAS DO TOPO (Agora baseadas no mesmo df_filtrado, mas apenas quem JÁ ATIVOU)
+    df_ativos = df_filtrado[df_filtrado['mes_ref_ativa'] == mes_sel]
+    v_real, r_real = df_ativos['acessos'].sum(), df_ativos['preço oferta'].sum()
     
     m1, m2 = st.columns(2)
     m1.metric("Volume Ativo", f"{int(v_real)} / 626", f"{(v_real/626):.1%}")
@@ -53,18 +66,12 @@ if arquivos_locais:
 
     st.divider()
     
-    # 📊 KANBAN (A LÓGICA EXCEL): Ativados no Mês Selecionado + Vazios (Backlog)
-    # TRAVA: Remove ativações de outros meses que não sejam o 'mes_sel'
-    mask_safra = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
-    mask_base = (df['fila atual'].str.upper() != 'CANCELADO') & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False))
-    
-    df_f = df[mask_safra & mask_base & (df['parceiro'].isin(parc_sel))]
-
+    # KANBAN (Baseado no df_filtrado inteiro)
     filas = [{"t":"PENDENTE","s":["PRÉ-VENDA"],"c":"header-pendente"},{"t":"ANÁLISE","s":["EM ANÁLISE","CRÉDITO"],"c":"header-analise"},{"t":"DEVOLVIDOS","s":["DEVOLVIDOS"],"c":"header-devolvido"},{"t":"ENTRANTES","s":["ENTRANTE"],"c":"header-entrante"}]
     cols = st.columns(4)
     for i, f in enumerate(filas):
         with cols[i]:
-            df_fila = df_f[df_f['status_dash'].isin(f["s"])]
+            df_fila = df_filtrado[df_filtrado['status_dash'].isin(f["s"])]
             st.markdown(f"<div class='column-header {f['c']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:
