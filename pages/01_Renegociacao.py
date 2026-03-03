@@ -33,7 +33,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. MAPEAMENTO DE STATUS ATUALIZADO (Conforme sua lista técnica)
+# 3. MAPEAMENTO RIGOROSO DE STATUS (Conforme image_b81348.png)
 MAP_STATUS = {
     'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE', 'FIDELIZAÇÃO': 'ENTRANTE',
     'AG. IMPR. DOCs/EXPEDIÇÃO': 'ENTRANTE', 'INCONSISTENCIA': 'ENTRANTE',
@@ -47,7 +47,7 @@ MAP_STATUS = {
     'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO',
     'CADASTRO': 'PRÉ-VENDA', 'AG. ACEITE DIGITAL': 'PRÉ-VENDA',
     'DEVOLVIDOS': 'DEVOLVIDOS', 'FALTA APARELHO - TERMINAIS': 'DEVOLVIDOS',
-    'REANÁLISE REPROVADA': 'DEVOLVIDOS', 'CANCELADO': 'CANCELADO'
+    'REANÁLISE REPROVADA': 'DEVOLVIDOS'
 }
 
 # 4. METAS RENEG
@@ -68,8 +68,11 @@ if arquivos_locais:
     
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
-    # Aplicação do mapeamento rigoroso
-    df['status_dash'] = df['fila atual'].str.strip().str.upper().map(MAP_STATUS).fillna('OUTROS')
+    
+    # Tratamento de status com limpeza de espaços
+    df['fila_limpa'] = df['fila atual'].str.strip().str.upper()
+    df['status_dash'] = df['fila_limpa'].map(MAP_STATUS).fillna('OUTROS')
+    
     df['data de ativação'] = pd.to_datetime(df['data de ativação'], errors='coerce')
     df['mes_ref_ativa'] = df['data de ativação'].dt.strftime('%m/%Y')
 
@@ -81,17 +84,15 @@ if arquivos_locais:
         lista_meses = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
         if mes_atual_alvo not in lista_meses: lista_meses.append(mes_atual_alvo)
         lista_meses = sorted(list(set(lista_meses)), reverse=True)
-        
-        idx_mes = lista_meses.index(mes_atual_alvo) if mes_atual_alvo in lista_meses else 0
-        mes_sel = st.selectbox("Mês de Análise", lista_meses, index=idx_mes)
+        mes_sel = st.selectbox("Mês de Análise", lista_meses, index=lista_meses.index(mes_atual_alvo))
 
     # 6. HEADER
     st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div class='update-tag'>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
 
-    # 7. ATINGIMENTO (Apenas Ativados no Mês Selecionado)
+    # 7. ATINGIMENTO (Filtro por Tipo e Mês)
     df_meta = df[(df['mes_ref_ativa'] == mes_sel) & 
                 (df['tipo de contratação'].str.upper() == 'RENEGOCIAÇÃO') & 
-                (df['status_dash'] != 'CANCELADO')].copy()
+                (df['fila_limpa'] != 'CANCELADO')].copy()
     
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
@@ -103,17 +104,16 @@ if arquivos_locais:
         st.metric("Receita Ativa (R$)", f"R$ {r_real:,.2f} / R$ {meta_rec_reneg:,.2f}", f"{(r_real/meta_rec_reneg):.1%}")
         st.progress(min(r_real/meta_rec_reneg, 1.0))
 
-    # 8. KANBAN (REGRAS DE FILTRO REFINADAS)
+    # 8. KANBAN (REGRA RIGOROSA)
     st.divider()
-    # MÁSCARA: (Mês de Ativação == Selecionado) OU (Data Ativação Vazia) E NÃO CANCELADO
-    mask_operacional = (
-        ((df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())) & 
-        (df['fila atual'].str.strip().str.upper() != 'CANCELADO')
-    )
+    # 1. Apenas Tipo RENEGOCIAÇÃO
+    # 2. NÃO CANCELADO
+    # 3. (Ativado no Mês Selecionado) OU (Data Vazia)
+    mask_reneg = (df['tipo de contratação'].str.upper() == 'RENEGOCIAÇÃO')
+    mask_no_cancel = (df['fila_limpa'] != 'CANCELADO')
+    mask_safra_pipeline = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
     
-    df_f = df[mask_operacional & 
-              (df['parceiro'].isin(parc_sel)) & 
-              (df['tipo de contratação'].str.upper() == 'RENEGOCIAÇÃO')].copy()
+    df_f = df[mask_reneg & mask_no_cancel & mask_safra_pipeline & (df['parceiro'].isin(parc_sel))].copy()
 
     st.subheader(f"📊 Fluxo de Tramitação: Pipeline Renegociações")
     filas = [
@@ -132,6 +132,7 @@ if arquivos_locais:
             
             with st.expander(f"Σ {v_fila} | R$ {r_fila:,.2f}", expanded=True):
                 if not df_fila.empty:
+                    # Agrupamento para limpar a visualização
                     res = df_fila.groupby('razão social').agg({'acessos':'sum', 'preço oferta':'sum'}).reset_index().sort_values('acessos', ascending=False)
                     st.dataframe(res.rename(columns={'acessos':'GROSS', 'preço oferta':'R$'}), hide_index=True, use_container_width=True)
 else:
