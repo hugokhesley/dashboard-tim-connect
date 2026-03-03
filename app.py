@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import pytz
+import os
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="TIM | Intelligence & Metas", layout="wide", page_icon="📊")
@@ -48,7 +49,7 @@ MAP_STATUS = {
     'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO', 'APROVAÇÃO P2B': 'EM ANÁLISE'
 }
 
-# 4. LÓGICA DE METAS (VOLUME = ACESSOS | RECEITA = PREÇO OFERTA)
+# 4. METAS (VOLUME = ACESSOS | RECEITA = PREÇO OFERTA)
 try:
     meta_vol = st.secrets.get("META_VOL", 626.0)
     meta_rec = st.secrets.get("META_REC", 21760.0)
@@ -56,32 +57,44 @@ except Exception:
     meta_vol = 626.0
     meta_rec = 21760.0
 
-# 5. SIDEBAR COM UPLOAD MÚLTIPLO
+# 5. SIDEBAR E LÓGICA DE DADOS
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/TIM_logo.svg/1200px-TIM_logo.svg.png", width=80)
     st.title("Gestão de Dados")
     
-    # Habilitado accept_multiple_files=True
-    arquivos_enviados = st.file_uploader("Upload Bases TIM (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+    arquivos_manuais = st.file_uploader("Atualizar Bases (Opcional)", type=['xlsx'], accept_multiple_files=True)
     
     fuso_br = pytz.timezone('America/Sao_Paulo')
-    data_upload = datetime.now(fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
+    bases_finais = []
+    origem_dados = ""
+    data_upload = ""
 
-if arquivos_enviados:
+    if arquivos_manuais:
+        bases_finais = arquivos_manuais
+        origem_dados = "Upload Manual"
+        data_upload = datetime.now(fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
+    else:
+        # Busca automática no GitHub
+        arquivos_locais = [f for f in os.listdir('.') if f.endswith('.xlsx') and not f.startswith('~$')]
+        if arquivos_locais:
+            bases_finais = arquivos_locais
+            origem_dados = "GitHub (Sincronizado)"
+            mod_time = os.path.getmtime(arquivos_locais[0])
+            data_upload = datetime.fromtimestamp(mod_time, fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
+
+if bases_finais:
     lista_dfs = []
-    for arquivo in arquivos_enviados:
+    for arquivo in bases_finais:
         temp_df = pd.read_excel(arquivo)
         temp_df.columns = temp_df.columns.str.strip().str.lower()
         lista_dfs.append(temp_df)
     
-    # Juntar todas as bases em uma só
     df = pd.concat(lista_dfs, ignore_index=True)
     
-    # Colunas chave
+    # Tratamentos de Colunas
     col_input, col_ativ = 'data de input', 'data de ativação'
     col_vendedor, col_tipo = 'responsável venda', 'tipo de contratação'
     
-    # Tratamentos básicos
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
     df['status_dash'] = df['fila atual'].map(MAP_STATUS).fillna('OUTROS')
@@ -91,13 +104,13 @@ if arquivos_enviados:
 
     with st.sidebar:
         meses = sorted([m for m in df['mes_ref'].dropna().unique()], reverse=True)
-        mes_sel = st.selectbox("Mês de Análise", meses if meses else ["02/2026"])
-        parc_sel = st.multiselect("Filtrar Parceiros", sorted(df['parceiro'].unique()), default=df['parceiro'].unique())
+        mes_sel = st.selectbox("Mês de Referência", meses if meses else ["02/2026"])
+        parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].unique()), default=df['parceiro'].unique())
         
         tipos_disponiveis = sorted(df[col_tipo].dropna().unique().tolist())
-        tipo_sel_lateral = st.multiselect("Filtro Operacional: Tipo Contratação", tipos_disponiveis, default=tipos_disponiveis)
+        tipo_sel_lateral = st.multiselect("Filtro Operacional", tipos_disponiveis, default=tipos_disponiveis)
         
-        st.success(f"📌 {len(arquivos_enviados)} bases carregadas:\n{data_upload}")
+        st.success(f"📌 {origem_dados}\n🕒 {data_upload}")
 
     # 6. HEADER
     data_ref = df[col_input].max().date()
@@ -114,11 +127,11 @@ if arquivos_enviados:
         st.markdown(f"""
             <div class='header-premium'>
                 <h2 style='margin:0;'>{mes_sel} - SMB PB</h2>
-                <div class='update-tag'>🕒 Último Upload: {data_upload}</div>
+                <div class='update-tag'>🕒 {origem_dados}: {data_upload}</div>
             </div>
         """, unsafe_allow_html=True)
 
-    # 7. SEÇÃO DE ATINGIMENTO (REGRA RÍGIDA CARTA META)
+    # 7. ATINGIMENTO CARTA META (REGRA RÍGIDA)
     st.markdown("### 🎯 Atingimento Carta Meta (Corporate)")
     df_meta_rigida = df[
         (df['mes_ref'] == mes_sel) & 
@@ -134,11 +147,11 @@ if arquivos_enviados:
 
     m1, m2, m3 = st.columns(3)
     with m1:
-        perc_vol = (real_vol / meta_vol)
-        st.metric("Volume Ativado (Acessos)", f"{int(real_vol)} / {int(meta_vol)}", f"{perc_vol:.1%}")
+        perc_vol = real_vol / meta_vol
+        st.metric("Volume Ativo (Acessos)", f"{int(real_vol)} / {int(meta_vol)}", f"{perc_vol:.1%}")
         st.progress(min(perc_vol, 1.0))
     with m2:
-        perc_rec = (real_rec / meta_rec)
+        perc_rec = real_rec / meta_rec
         st.metric("Receita Ativa (Preço Oferta)", f"R$ {real_rec:,.2f} / R$ {meta_rec:,.2f}", f"{perc_rec:.1%}")
         st.progress(min(perc_rec, 1.0))
     with m3:
@@ -163,10 +176,8 @@ if arquivos_enviados:
             st.markdown(f"<div class='column-header {f['cls']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:
-                    res = df_fila.groupby('razão social').agg({'acessos':'sum', 'preço oferta':'sum'}).reset_index()
-                    res = res.sort_values('acessos', ascending=False).rename(columns={'acessos':'GROSS', 'preço oferta':'R$'})
-                    res['R$'] = res['R$'].map('R$ {:,.2f}'.format)
-                    st.dataframe(res, hide_index=True, use_container_width=True)
+                    res = df_fila.groupby('razão social').agg({'acessos':'sum', 'preço oferta':'sum'}).reset_index().sort_values('acessos', ascending=False)
+                    st.dataframe(res.rename(columns={'acessos':'GROSS', 'preço oferta':'R$'}), hide_index=True)
 
     # 9. CALENDÁRIO
     st.divider()
@@ -181,7 +192,6 @@ if arquivos_enviados:
             if val > 0: return 'background-color: #064E3B; color: #10B981; font-weight: bold;'
             return 'background-color: #450A0A; color: #EF4444; opacity: 0.3;'
         
-        st.dataframe(cal.sort_values('Total', ascending=False).style.applymap(style_cal, subset=pd.IndexSlice[:, cal.columns != 'Total']).format(precision=0),
-                     use_container_width=True, height=450)
+        st.dataframe(cal.sort_values('Total', ascending=False).style.applymap(style_cal, subset=pd.IndexSlice[:, cal.columns != 'Total']).format(precision=0), use_container_width=True)
 else:
-    st.info("💡 Arraste as bases dos dois parceiros simultaneamente.")
+    st.warning("⚠️ Nenhuma base (.xlsx) detetada no GitHub ou Upload.")
