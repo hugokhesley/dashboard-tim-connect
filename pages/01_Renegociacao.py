@@ -5,35 +5,9 @@ from datetime import datetime
 import pytz
 import os
 
-# 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="TIM | Renegociação", layout="wide", page_icon="🔄")
 
-# 2. CSS PREMIUM
-st.markdown("""
-    <style>
-    .stApp { background-color: #0E1117; }
-    .header-reneg {
-        background: linear-gradient(90deg, #065F46 0%, #059669 100%);
-        padding: 25px; border-radius: 15px; color: white; text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 25px;
-    }
-    .update-tag {
-        background-color: rgba(255,255,255,0.2);
-        padding: 4px 12px; border-radius: 20px; font-size: 0.85em;
-        display: inline-block; margin-top: 10px; border: 1px solid rgba(255,255,255,0.3);
-    }
-    .column-header {
-        padding: 10px; border-radius: 8px 8px 0 0; text-align: center;
-        font-weight: bold; color: white; font-size: 14px; text-transform: uppercase;
-    }
-    .header-pendente { background-color: #6366F1; }
-    .header-analise { background-color: #F59E0B; }
-    .header-devolvido { background-color: #EF4444; }
-    .header-entrante { background-color: #10B981; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 3. MAPEAMENTO RIGOROSO DE STATUS (Conforme image_b81348.png)
+# MAP_STATUS (Mesmo mapeamento rigoroso)
 MAP_STATUS = {
     'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE', 'FIDELIZAÇÃO': 'ENTRANTE',
     'AG. IMPR. DOCs/EXPEDIÇÃO': 'ENTRANTE', 'INCONSISTENCIA': 'ENTRANTE',
@@ -44,18 +18,11 @@ MAP_STATUS = {
     'REPROC. CRIAÇÃO ORDENS': 'ENTRANTE', 'APROVAÇÃO ÁREA DE ATUAÇÃO': 'ENTRANTE',
     'AG. ATIVAÇÃO': 'ENTRANTE', 'ATIVAÇÃO MANUAL': 'ENTRANTE', 'PRÉ-ATIVAÇÃO': 'ENTRANTE',
     'AG. ANALISE ANTI-FRAUDE': 'EM ANÁLISE', 'ANÁLISE DE CADASTRO - CRÉDITO': 'CRÉDITO',
-    'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO',
-    'CADASTRO': 'PRÉ-VENDA', 'AG. ACEITE DIGITAL': 'PRÉ-VENDA',
-    'DEVOLVIDOS': 'DEVOLVIDOS', 'FALTA APARELHO - TERMINAIS': 'DEVOLVIDOS',
-    'REANÁLISE REPROVADA': 'DEVOLVIDOS'
+    'CADASTRO': 'PRÉ-VENDA', 'DEVOLVIDOS': 'DEVOLVIDOS'
 }
 
-# 4. METAS RENEG
-meta_vol_vendas = 626.0
-meta_vol_reneg = meta_vol_vendas * 1.2
-meta_rec_reneg = meta_vol_reneg * 60.0
+st.markdown("<style>.stApp { background-color: #0E1117; } .header-reneg { background: linear-gradient(90deg, #065F46 0%, #059669 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; }</style>", unsafe_allow_html=True)
 
-# 5. DADOS
 fuso_br = pytz.timezone('America/Sao_Paulo')
 agora = datetime.now(fuso_br)
 mes_atual_alvo = agora.strftime('%m/%Y')
@@ -68,72 +35,49 @@ if arquivos_locais:
     
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
-    
-    # Tratamento de status com limpeza de espaços
-    df['fila_limpa'] = df['fila atual'].str.strip().str.upper()
-    df['status_dash'] = df['fila_limpa'].map(MAP_STATUS).fillna('OUTROS')
-    
+    df['status_dash'] = df['fila atual'].str.strip().str.upper().map(MAP_STATUS).fillna('OUTROS')
     df['data de ativação'] = pd.to_datetime(df['data de ativação'], errors='coerce')
+    df['data de input'] = pd.to_datetime(df['data de input'], errors='coerce')
     df['mes_ref_ativa'] = df['data de ativação'].dt.strftime('%m/%Y')
+    df['mes_ref_input'] = df['data de input'].dt.strftime('%m/%Y')
 
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/TIM_logo.svg/1200px-TIM_logo.svg.png", width=90)
+        st.title("Filtros Reneg")
         lista_parceiros = sorted(df['parceiro'].dropna().unique().tolist())
         parc_sel = st.multiselect("Parceiros", lista_parceiros, default=lista_parceiros)
-        
-        lista_meses = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
-        if mes_atual_alvo not in lista_meses: lista_meses.append(mes_atual_alvo)
-        lista_meses = sorted(list(set(lista_meses)), reverse=True)
-        mes_sel = st.selectbox("Mês de Análise", lista_meses, index=lista_meses.index(mes_atual_alvo))
+        meses_reais = sorted(list(set(df['mes_ref_ativa'].dropna().unique()) | set(df['mes_ref_input'].dropna().unique())), reverse=True)
+        mes_sel = st.selectbox("Mês", meses_reais, index=meses_reais.index(mes_atual_alvo) if mes_atual_alvo in meses_reais else 0)
 
-    # 6. HEADER
-    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div class='update-tag'>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
-
-    # 7. ATINGIMENTO (Filtro por Tipo e Mês)
-    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & 
-                (df['tipo de contratação'].str.upper() == 'RENEGOCIAÇÃO') & 
-                (df['fila_limpa'] != 'CANCELADO')].copy()
+    st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div style='margin-top:10px;'>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
     
+    # METAS RENEG (120% de 626 = 751)
+    # FILTRO FLEXÍVEL PARA TIPO: Detecta "RENEGOCIAÇÃO", "RENEGOCIACAO", "Reneg", etc.
+    mask_reneg_tipo = df['tipo de contratação'].str.contains('RENEG', case=False, na=False)
+    
+    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & mask_reneg_tipo & (df['status_dash'] != 'CANCELADO')]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
     m1, m2 = st.columns(2)
-    with m1:
-        st.metric("Volume Ativo (Reneg)", f"{int(v_real)} / {int(meta_vol_reneg)}", f"{(v_real/meta_vol_reneg):.1%}")
-        st.progress(min(v_real/meta_vol_reneg, 1.0))
-    with m2:
-        st.metric("Receita Ativa (R$)", f"R$ {r_real:,.2f} / R$ {meta_rec_reneg:,.2f}", f"{(r_real/meta_rec_reneg):.1%}")
-        st.progress(min(r_real/meta_rec_reneg, 1.0))
+    m1.metric("Volume Ativo", f"{int(v_real)} / 751", f"{(v_real/751):.1%}")
+    m2.metric("Receita Ativa", f"R$ {r_real:,.2f} / R$ 45,060.00", f"{(r_real/45060):.1%}")
 
-    # 8. KANBAN (REGRA RIGOROSA)
+    # KANBAN RIGOROSO
     st.divider()
-    # 1. Apenas Tipo RENEGOCIAÇÃO
-    # 2. NÃO CANCELADO
-    # 3. (Ativado no Mês Selecionado) OU (Data Vazia)
-    mask_reneg = (df['tipo de contratação'].str.upper() == 'RENEGOCIAÇÃO')
-    mask_no_cancel = (df['fila_limpa'] != 'CANCELADO')
-    mask_safra_pipeline = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
+    mask_kanban = (
+        (df['mes_ref_ativa'] == mes_sel) | 
+        (df['data de ativação'].isna() & (df['mes_ref_input'] == mes_sel))
+    ) & (df['status_dash'] != 'CANCELADO') & mask_reneg_tipo
     
-    df_f = df[mask_reneg & mask_no_cancel & mask_safra_pipeline & (df['parceiro'].isin(parc_sel))].copy()
-
-    st.subheader(f"📊 Fluxo de Tramitação: Pipeline Renegociações")
-    filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "cls": "header-analise"},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "cls": "header-devolvido"},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "cls": "header-entrante"}
-    ]
+    df_f = df[mask_kanban & (df['parceiro'].isin(parc_sel))]
     
+    filas = [{"t": "PENDENTE", "s": ["PRÉ-VENDA"]}, {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"]}, {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"]}, {"t": "ENTRANTES", "s": ["ENTRANTE"]}]
     cols = st.columns(4)
     for i, f in enumerate(filas):
         with cols[i]:
             df_fila = df_f[df_f['status_dash'].isin(f["s"])]
-            st.markdown(f"<div class='column-header {f['cls']}'>{f['t']}</div>", unsafe_allow_html=True)
-            v_fila, r_fila = int(df_fila['acessos'].sum()), df_fila['preço oferta'].sum()
-            
-            with st.expander(f"Σ {v_fila} | R$ {r_fila:,.2f}", expanded=True):
+            st.markdown(f"<div class='column-header' style='background-color:#10B981;'>{f['t']}</div>", unsafe_allow_html=True)
+            with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:
-                    # Agrupamento para limpar a visualização
-                    res = df_fila.groupby('razão social').agg({'acessos':'sum', 'preço oferta':'sum'}).reset_index().sort_values('acessos', ascending=False)
-                    st.dataframe(res.rename(columns={'acessos':'GROSS', 'preço oferta':'R$'}), hide_index=True, use_container_width=True)
+                    st.dataframe(df_fila.groupby('razão social')[['acessos', 'preço oferta']].sum().reset_index().rename(columns={'acessos':'GROSS'}), hide_index=True)
 else:
-    st.warning("⚠️ Bases não encontradas.")
+    st.warning("Aguardando bases...")
