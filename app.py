@@ -6,7 +6,7 @@ import pytz
 import os
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="TIM | Intelligence & Metas", layout="wide", page_icon="📊")
+st.set_page_config(page_title="TIM | Metas Corporate", layout="wide", page_icon="🎯")
 
 # 2. CSS PREMIUM
 st.markdown("""
@@ -49,7 +49,7 @@ MAP_STATUS = {
     'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO', 'APROVAÇÃO P2B': 'EM ANÁLISE'
 }
 
-# 4. METAS CORPORATE
+# 4. METAS CORPORATE FIXAS
 meta_vol_fixa = 626.0
 meta_rec_fixa = 21760.0
 
@@ -73,21 +73,16 @@ with st.sidebar:
             bases_processar = arquivos_locais
             origem = "GitHub (Auto)"
             mod_time = os.path.getmtime(arquivos_locais[0])
-            data_up = datetime.fromtimestamp(mod_time, fuso_br).strftime('%d/%m/%Y %H:%M:%S')
+            data_upload = datetime.fromtimestamp(mod_time, fuso_br).strftime('%d/%m/%Y %H:%M:%S')
+            data_up = data_upload
         else:
             origem, data_up = "", ""
 
 if bases_processar:
-    dfs = []
-    for b in bases_processar:
-        temp = pd.read_excel(b)
-        temp.columns = temp.columns.str.strip().str.lower()
-        dfs.append(temp)
-    
+    dfs = [pd.read_excel(b).rename(columns=lambda x: x.strip().lower()) for b in bases_processar]
     df = pd.concat(dfs, ignore_index=True)
 
     if not df.empty:
-        # Tratamentos
         df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
         df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
         df['status_dash'] = df['fila atual'].map(MAP_STATUS).fillna('OUTROS')
@@ -100,20 +95,15 @@ if bases_processar:
             lista_parceiros = sorted(df['parceiro'].dropna().unique().tolist())
             parc_sel = st.multiselect("Parceiros", lista_parceiros, default=lista_parceiros)
             
-            # Mês de referência baseado na ativação (Meta)
             lista_meses = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
             idx_mes = lista_meses.index(mes_atual_alvo) if mes_atual_alvo in lista_meses else 0
             mes_sel = st.selectbox("Mês de Análise", lista_meses, index=idx_mes)
-            
-            st.divider()
-            opcao = st.radio("Visão Operacional:", ["Produtividade (NOVO/ADITIVO)", "RENEGOCIAÇÃO"])
-            filtro_tipo = ["NOVO", "ADITIVO"] if "Produtividade" in opcao else ["RENEGOCIAÇÃO"]
             st.success(f"📌 {origem}\n🕒 {data_up}")
 
         # 6. HEADER
-        st.markdown(f"<div class='header-premium'><h2>{mes_sel} - SMB PB</h2><div class='update-tag'>🕒 {origem}: {data_up}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='header-premium'><h2>{mes_sel} - PRODUTIVIDADE CORPORATE</h2><div class='update-tag'>🕒 {origem}: {data_up}</div></div>", unsafe_allow_html=True)
 
-        # 7. METAS (Baseado no Mês de Ativação)
+        # 7. METAS (Apenas NOVO/ADITIVO)
         st.markdown("### 🎯 Atingimento Carta Meta (Corporate)")
         df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.upper().isin(['ADITIVO', 'NOVO'])) & (df['status_dash'] != 'CANCELADO')].copy()
         v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
@@ -126,13 +116,12 @@ if bases_processar:
             st.metric("Receita Ativa", f"R$ {r_real:,.2f} / R$ {meta_rec_fixa:,.2f}", f"{(r_real/meta_rec_fixa):.1%}")
             st.progress(min(r_real/meta_rec_fixa, 1.0))
 
-        # 8. KANBAN
+        # 8. KANBAN (Filtrado para Produtividade)
         st.divider()
-        # Regra do Kanban: Mes Selecionado (Ativados) OU Sem Data de Ativação (Ainda em trâmite)
         mask_kanban = (df['mes_ref_ativa'] == mes_sel) | ((df['data de ativação'].isna()) & (df['status_dash'] != 'CANCELADO'))
-        df_f = df[mask_kanban & (df['parceiro'].isin(parc_sel)) & (df['tipo de contratação'].str.upper().isin(filtro_tipo))].copy()
+        df_f = df[mask_kanban & (df['parceiro'].isin(parc_sel)) & (df['tipo de contratação'].str.upper().isin(['NOVO', 'ADITIVO']))].copy()
 
-        st.subheader(f"📊 Fluxo de Tramitação: {opcao}")
+        st.subheader("📊 Fluxo de Tramitação (Novo/Aditivo)")
         filas = [{"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"}, {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "cls": "header-analise"}, {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "cls": "header-devolvido"}, {"t": "ENTRANTES", "s": ["ENTRANTE"], "cls": "header-entrante"}]
         cols = st.columns(4)
         for i, f in enumerate(filas):
@@ -144,25 +133,17 @@ if bases_processar:
                         res = df_fila.groupby('razão social').agg({'acessos':'sum', 'preço oferta':'sum'}).reset_index().sort_values('acessos', ascending=False)
                         st.dataframe(res.rename(columns={'acessos':'GROSS', 'preço oferta':'R$'}), hide_index=True)
 
-        # 9. CALENDÁRIO (CORREÇÃO DE MÊS E FORMATAÇÃO)
+        # 9. CALENDÁRIO
         st.divider()
-        st.subheader(f"🗓️ Produtividade Diária (Input): {opcao}")
-        # Filtro Rigoroso: O calendário agora só mostra o que foi imputado no MÊS SELECIONADO
+        st.subheader("🗓️ Produtividade Diária (Inputs de Março)")
         df_cal = df_f[(df_f['mes_ref_input'] == mes_sel) & (df_f['status_dash'] != 'CANCELADO')].copy()
-        
         if not df_cal.empty:
             df_cal['dia'] = df_cal['data de input'].dt.day.astype(int)
             cal = df_cal.pivot_table(index='responsável venda', columns='dia', values='acessos', aggfunc='sum').fillna(0)
             cal['Total'] = cal.sum(axis=1)
-            
-            # Formatação para remover o .0 e converter em Inteiro
             def style_cal(val):
                 if val > 0: return 'background-color: #064E3B; color: #10B981; font-weight: bold;'
                 return 'background-color: #450A0A; color: #EF4444; opacity: 0.3;'
-            
-            # .format(precision=0) resolve o problema do 1.0, 2.0
             st.dataframe(cal.sort_values('Total', ascending=False).style.applymap(style_cal, subset=pd.IndexSlice[:, cal.columns != 'Total']).format(precision=0), use_container_width=True)
-        else:
-            st.info(f"Nenhum input registrado para o mês de {mes_sel}")
 else:
     st.warning("⚠️ Nenhuma base encontrada.")
