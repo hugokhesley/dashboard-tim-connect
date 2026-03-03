@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import pytz
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="TIM | Intelligence & Metas", layout="wide", page_icon="📊")
@@ -14,6 +15,11 @@ st.markdown("""
         background: linear-gradient(90deg, #1E3A8A 0%, #3B82F6 100%);
         padding: 20px; border-radius: 15px; color: white; text-align: center;
         box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 20px;
+    }
+    .update-tag {
+        background-color: rgba(255,255,255,0.2);
+        padding: 4px 10px; border-radius: 20px; font-size: 0.8em;
+        display: inline-block; margin-top: 10px;
     }
     .kpi-card {
         background-color: #1A1C23; padding: 15px; border-radius: 12px;
@@ -30,7 +36,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. MAPEAMENTO DE STATUS (Baseado na regra de negócio)
+# 3. MAPEAMENTO DE STATUS
 MAP_STATUS = {
     'CANCELADO': 'CANCELADO', 'DEVOLVIDOS': 'DEVOLVIDOS', 'FALTA APARELHO - TERMINAIS': 'DEVOLVIDOS',
     'REANÁLISE REPROVADA': 'DEVOLVIDOS', 'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE',
@@ -42,26 +48,40 @@ MAP_STATUS = {
     'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO', 'APROVAÇÃO P2B': 'EM ANÁLISE'
 }
 
-# 4. INTEGRAÇÃO COM METAS (Via Secrets ou Padrão)
-# Se não houver secrets configurados, usa os valores da carta de fev/26
-meta_vol = st.secrets.get("META_VOL", 626.0)
-meta_rec = st.secrets.get("META_REC", 21760.0)
+# 4. LÓGICA DE METAS (VOLUME = ACESSOS | RECEITA = PREÇO OFERTA)
+try:
+    meta_vol = st.secrets.get("META_VOL", 626.0)
+    meta_rec = st.secrets.get("META_REC", 21760.0)
+except Exception:
+    meta_vol = 626.0
+    meta_rec = 21760.0
 
-# 5. SIDEBAR
+# 5. SIDEBAR COM UPLOAD MÚLTIPLO
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/TIM_logo.svg/1200px-TIM_logo.svg.png", width=80)
-    st.title("Filtros de Gestão")
-    arquivo = st.file_uploader("Upload Base TIM (.xlsx)", type=['xlsx'])
+    st.title("Gestão de Dados")
+    
+    # Habilitado accept_multiple_files=True
+    arquivos_enviados = st.file_uploader("Upload Bases TIM (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+    
+    fuso_br = pytz.timezone('America/Sao_Paulo')
+    data_upload = datetime.now(fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
 
-if arquivo:
-    df = pd.read_excel(arquivo)
-    df.columns = df.columns.str.strip().str.lower()
+if arquivos_enviados:
+    lista_dfs = []
+    for arquivo in arquivos_enviados:
+        temp_df = pd.read_excel(arquivo)
+        temp_df.columns = temp_df.columns.str.strip().str.lower()
+        lista_dfs.append(temp_df)
+    
+    # Juntar todas as bases em uma só
+    df = pd.concat(lista_dfs, ignore_index=True)
     
     # Colunas chave
     col_input, col_ativ = 'data de input', 'data de ativação'
     col_vendedor, col_tipo = 'responsável venda', 'tipo de contratação'
     
-    # Tratamentos
+    # Tratamentos básicos
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
     df['status_dash'] = df['fila atual'].map(MAP_STATUS).fillna('OUTROS')
@@ -72,9 +92,14 @@ if arquivo:
     with st.sidebar:
         meses = sorted([m for m in df['mes_ref'].dropna().unique()], reverse=True)
         mes_sel = st.selectbox("Mês de Análise", meses if meses else ["02/2026"])
-        parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].unique()), default=df['parceiro'].unique())
+        parc_sel = st.multiselect("Filtrar Parceiros", sorted(df['parceiro'].unique()), default=df['parceiro'].unique())
+        
+        tipos_disponiveis = sorted(df[col_tipo].dropna().unique().tolist())
+        tipo_sel_lateral = st.multiselect("Filtro Operacional: Tipo Contratação", tipos_disponiveis, default=tipos_disponiveis)
+        
+        st.success(f"📌 {len(arquivos_enviados)} bases carregadas:\n{data_upload}")
 
-    # 6. HEADER (D-1 e D-0)
+    # 6. HEADER
     data_ref = df[col_input].max().date()
     data_ontem = data_ref - timedelta(days=1)
     df_hoje = df[df[col_input].dt.date == data_ref]
@@ -86,40 +111,44 @@ if arquivo:
     with c_d0:
         st.markdown(f"<div class='kpi-card'><small>IMPUTE ({data_ref.strftime('%d/%m')}) 🟢</small><br><b>{int(df_hoje['acessos'].sum())}</b><br><small>R$ {df_hoje['preço oferta'].sum():,.2f}</small></div>", unsafe_allow_html=True)
     with c_title:
-        st.markdown(f"<div class='header-premium'><h2>{mes_sel} - SMB PB</h2><small>PAINEL DE GESTÃO COMERCIAL</small></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+            <div class='header-premium'>
+                <h2 style='margin:0;'>{mes_sel} - SMB PB</h2>
+                <div class='update-tag'>🕒 Último Upload: {data_upload}</div>
+            </div>
+        """, unsafe_allow_html=True)
 
-    # 7. SEÇÃO DE ATINGIMENTO (CARTA META)
-    # REGRA: Apenas ativados no mês + ADITIVO/NOVO 
+    # 7. SEÇÃO DE ATINGIMENTO (REGRA RÍGIDA CARTA META)
     st.markdown("### 🎯 Atingimento Carta Meta (Corporate)")
-    df_meta = df[
+    df_meta_rigida = df[
         (df['mes_ref'] == mes_sel) & 
         (df[col_tipo].str.upper().isin(['ADITIVO', 'NOVO'])) &
         (df['status_dash'] != 'CANCELADO')
     ].copy()
 
-    real_vol, real_rec = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
+    real_vol = df_meta_rigida['acessos'].sum()
+    real_rec = df_meta_rigida['preço oferta'].sum()
     
-    # Tendência
-    dia_atual = datetime.now().day if datetime.now().strftime('%m/%Y') == mes_sel else 28
+    dia_atual = datetime.now(fuso_br).day if datetime.now(fuso_br).strftime('%m/%Y') == mes_sel else 28
     tendencia_vol = (real_vol / dia_atual) * 28 if dia_atual > 0 else 0
 
     m1, m2, m3 = st.columns(3)
     with m1:
         perc_vol = (real_vol / meta_vol)
-        st.metric("Volume Ativado (ADITIVO/NOVO)", f"{int(real_vol)} / {int(meta_vol)}", f"{perc_vol:.1%}")
+        st.metric("Volume Ativado (Acessos)", f"{int(real_vol)} / {int(meta_vol)}", f"{perc_vol:.1%}")
         st.progress(min(perc_vol, 1.0))
     with m2:
         perc_rec = (real_rec / meta_rec)
-        st.metric("Receita Ativa (ADITIVO/NOVO)", f"R$ {real_rec:,.2f}", f"{perc_rec:.1%}")
+        st.metric("Receita Ativa (Preço Oferta)", f"R$ {real_rec:,.2f} / R$ {meta_rec:,.2f}", f"{perc_rec:.1%}")
         st.progress(min(perc_rec, 1.0))
     with m3:
         cor_tend = "normal" if tendencia_vol >= meta_vol else "inverse"
-        st.metric("Forecast Final", f"{int(tendencia_vol)} Acessos", f"{tendencia_vol - meta_vol:+.0f}", delta_color=cor_tend)
+        st.metric("Forecast Final (Acessos)", f"{int(tendencia_vol)} Acessos", f"{tendencia_vol - meta_vol:+.0f}", delta_color=cor_tend)
 
-    # 8. FILAS KANBAN (Inclui Tramitação)
+    # 8. FILAS KANBAN
     st.divider()
-    mask_kanban = (df['mes_ref'] == mes_sel) | ((df[col_ativ].isna()) & (df['status_dash'] != 'CANCELADO'))
-    df_f = df[mask_kanban & (df['parceiro'].isin(parc_sel))].copy()
+    mask_operacional = (df['mes_ref'] == mes_sel) | ((df[col_ativ].isna()) & (df['status_dash'] != 'CANCELADO'))
+    df_f = df[mask_operacional & (df['parceiro'].isin(parc_sel)) & (df[col_tipo].isin(tipo_sel_lateral))].copy()
 
     filas = [
         {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"},
@@ -139,9 +168,9 @@ if arquivo:
                     res['R$'] = res['R$'].map('R$ {:,.2f}'.format)
                     st.dataframe(res, hide_index=True, use_container_width=True)
 
-    # 9. CALENDÁRIO LÍQUIDO (Verde/Vermelho)
+    # 9. CALENDÁRIO
     st.divider()
-    st.subheader("🗓️ Produtividade Diária (Impute Líquido)")
+    st.subheader("🗓️ Produtividade Diária (Grupo Econômico)")
     df_liq = df_f[df_f['status_dash'] != 'CANCELADO'].copy()
     if not df_liq.empty:
         df_liq['dia'] = df_liq[col_input].dt.day
@@ -155,4 +184,4 @@ if arquivo:
         st.dataframe(cal.sort_values('Total', ascending=False).style.applymap(style_cal, subset=pd.IndexSlice[:, cal.columns != 'Total']).format(precision=0),
                      use_container_width=True, height=450)
 else:
-    st.info("💡 Arraste o ficheiro Excel para começar.")
+    st.info("💡 Arraste as bases dos dois parceiros simultaneamente.")
