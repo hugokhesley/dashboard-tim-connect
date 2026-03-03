@@ -43,8 +43,8 @@ if arquivos_locais:
 
     st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
     
-    # META: Apenas Ativados no Mês
-    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['status_dash'] != 'CANCELADO')]
+    # META: Rigorosa (Apenas o que ativou no mês selecionado)
+    df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO')]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
     m1, m2 = st.columns(2)
@@ -53,25 +53,23 @@ if arquivos_locais:
 
     st.divider()
     
-    # KANBAN FILTRADO: ENTRANTE só se tiver data no mês. Os outros podem ser Pipeline (sem data).
+    # KANBAN: Regra Safra + Pipeline (Data no mês OU Data Vazia)
     mask_base = (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO') & (df['parceiro'].isin(parc_sel))
+    mask_data = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
     
+    df_f = df[mask_base & mask_data]
+
     cols = st.columns(4)
     filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente", "pipe": True},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise", "pipe": True},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido", "pipe": True},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante", "pipe": False}
+        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente"},
+        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise"},
+        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido"},
+        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante"}
     ]
 
     for i, f in enumerate(filas):
         with cols[i]:
-            if f["pipe"]: # Mostra o que ativou no mês + o que está sem data
-                mask_f = mask_base & df['status_dash'].isin(f["s"]) & ((df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna()))
-            else: # ENTRANTES: Mostra APENAS o que ativou no mês (Igual à Meta)
-                mask_f = mask_base & df['status_dash'].isin(f["s"]) & (df['mes_ref_ativa'] == mes_sel)
-            
-            df_fila = df[mask_f]
+            df_fila = df_f[df_f['status_dash'].isin(f["s"])]
             st.markdown(f"<div class='column-header {f['c']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:

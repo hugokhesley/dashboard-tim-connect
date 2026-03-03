@@ -6,7 +6,6 @@ import pytz
 
 st.set_page_config(page_title="TIM | Renegociação", layout="wide", page_icon="🔄")
 
-# Mesmo MAP_STATUS do Vendas
 MAP_STATUS = {
     'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE', 'FIDELIZAÇÃO': 'ENTRANTE',
     'AG. IMPR. DOCs/EXPEDIÇÃO': 'ENTRANTE', 'INCONSISTENCIA': 'ENTRANTE',
@@ -43,7 +42,7 @@ if arquivos_locais:
 
     st.markdown(f"<div class='header-reneg'><h1>🔄 GESTÃO DE RENEGOCIAÇÕES</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
     
-    # ATINGIMENTO RENEG (120% de 626 = 751)
+    # META RENEG
     mask_reneg_tipo = df['tipo de contratação'].str.contains('RENEG', case=False, na=False)
     df_meta = df[(df['mes_ref_ativa'] == mes_sel) & mask_reneg_tipo & (df['fila atual'].str.upper() != 'CANCELADO')]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
@@ -54,25 +53,23 @@ if arquivos_locais:
 
     st.divider()
     
-    # KANBAN RENEG: ENTRANTES travado na Data de Ativação do mês.
+    # KANBAN RENEG: Safra + Pipeline (Data no mês OU Data Vazia)
     mask_base = mask_reneg_tipo & (df['fila atual'].str.upper() != 'CANCELADO') & (df['parceiro'].isin(parc_sel))
+    mask_data = (df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna())
     
+    df_f = df[mask_base & mask_data]
+
     cols = st.columns(4)
     filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente", "pipe": True},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise", "pipe": True},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido", "pipe": True},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante", "pipe": False}
+        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente"},
+        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise"},
+        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido"},
+        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante"}
     ]
 
     for i, f in enumerate(filas):
         with cols[i]:
-            if f["pipe"]:
-                mask_f = mask_base & df['status_dash'].isin(f["s"]) & ((df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna()))
-            else:
-                mask_f = mask_base & df['status_dash'].isin(f["s"]) & (df['mes_ref_ativa'] == mes_sel)
-            
-            df_fila = df[mask_f]
+            df_fila = df_f[df_f['status_dash'].isin(f["s"])]
             st.markdown(f"<div class='column-header {f['c']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:
