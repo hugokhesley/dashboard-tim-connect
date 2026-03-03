@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import os
 from datetime import datetime
 import pytz
-import os
 
 st.set_page_config(page_title="TIM | Vendas Corporate", layout="wide", page_icon="🎯")
 
-# 1. MAPEAMENTO TÉCNICO COMPLETO
+# 1. MAPEAMENTO TÉCNICO (image_b81348.png)
 MAP_STATUS = {
     'CONCLUÍDO': 'ENTRANTE', 'ENTREGA': 'ENTRANTE', 'FIDELIZAÇÃO': 'ENTRANTE',
     'AG. IMPR. DOCs/EXPEDIÇÃO': 'ENTRANTE', 'INCONSISTENCIA': 'ENTRANTE',
@@ -18,24 +17,18 @@ MAP_STATUS = {
     'REPROC. CRIAÇÃO ORDENS': 'ENTRANTE', 'APROVAÇÃO ÁREA DE ATUAÇÃO': 'ENTRANTE',
     'AG. ATIVAÇÃO': 'ENTRANTE', 'ATIVAÇÃO MANUAL': 'ENTRANTE', 'PRÉ-ATIVAÇÃO': 'ENTRANTE',
     'AG. ANALISE ANTI-FRAUDE': 'EM ANÁLISE', 'ANÁLISE DE CADASTRO - CRÉDITO': 'CRÉDITO',
-    'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO',
-    'CADASTRO': 'PRÉ-VENDA', 'AG. ACEITE DIGITAL': 'PRÉ-VENDA',
-    'DEVOLVIDOS': 'DEVOLVIDOS', 'FALTA APARELHO - TERMINAIS': 'DEVOLVIDOS',
-    'REANÁLISE REPROVADA': 'DEVOLVIDOS', 'CANCELADO': 'CANCELADO'
+    'CADASTRO': 'PRÉ-VENDA', 'DEVOLVIDOS': 'DEVOLVIDOS'
 }
 
 st.markdown("<style>.stApp { background-color: #0E1117; } .header-premium { background: linear-gradient(90deg, #1E3A8A 0%, #3B82F6 100%); padding: 25px; border-radius: 15px; color: white; text-align: center; margin-bottom: 25px; } .column-header { padding: 10px; border-radius: 8px 8px 0 0; text-align: center; font-weight: bold; color: white; font-size: 14px; text-transform: uppercase; } .header-pendente { background-color: #6366F1; } .header-analise { background-color: #F59E0B; } .header-devolvido { background-color: #EF4444; } .header-entrante { background-color: #10B981; }</style>", unsafe_allow_html=True)
 
 fuso_br = pytz.timezone('America/Sao_Paulo')
-agora = datetime.now(fuso_br)
-mes_atual_alvo = agora.strftime('%m/%Y')
+mes_atual_alvo = datetime.now(fuso_br).strftime('%m/%Y')
 
 arquivos_locais = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and not f.startswith('~$')]
 
 if arquivos_locais:
-    dfs = [pd.read_excel(b).rename(columns=lambda x: x.strip().lower()) for b in arquivos_locais]
-    df = pd.concat(dfs, ignore_index=True)
-    
+    df = pd.concat([pd.read_excel(b).rename(columns=lambda x: x.strip().lower()) for b in arquivos_locais], ignore_index=True)
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
     df['status_dash'] = df['fila atual'].str.strip().str.upper().map(MAP_STATUS).fillna('OUTROS')
@@ -43,16 +36,14 @@ if arquivos_locais:
     df['mes_ref_ativa'] = df['data de ativação'].dt.strftime('%m/%Y')
 
     with st.sidebar:
-        st.title("Gestão de Vendas")
-        lista_parceiros = sorted(df['parceiro'].dropna().unique().tolist())
-        parc_sel = st.multiselect("Parceiros", lista_parceiros, default=lista_parceiros)
+        parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].dropna().unique()), default=df['parceiro'].dropna().unique())
         meses_reais = sorted(df['mes_ref_ativa'].dropna().unique().tolist(), reverse=True)
         if mes_atual_alvo not in meses_reais: meses_reais.insert(0, mes_atual_alvo)
         mes_sel = st.selectbox("Mês de Análise", meses_reais, index=meses_reais.index(mes_atual_alvo) if mes_atual_alvo in meses_reais else 0)
 
-    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div style='margin-top:10px;'>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='header-premium'><h1>🚀 PAINEL DE VENDAS CORPORATE</h1><div>📅 Safra: {mes_sel}</div></div>", unsafe_allow_html=True)
     
-    # 🎯 BARRA DE META: Apenas o que ativou no mês
+    # META: Apenas Ativados no Mês
     df_meta = df[(df['mes_ref_ativa'] == mes_sel) & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['status_dash'] != 'CANCELADO')]
     v_real, r_real = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
     
@@ -60,29 +51,28 @@ if arquivos_locais:
     m1.metric("Volume Ativo", f"{int(v_real)} / 626", f"{(v_real/626):.1%}")
     m2.metric("Receita Ativa", f"R$ {r_real:,.2f} / R$ 21,760.00", f"{(r_real/21760):.1%}")
 
-    # 📊 KANBAN RESTAURADO: Ativados no mês + Tudo que está sem data (Pipeline)
     st.divider()
-    mask_kanban = (
-        (df['mes_ref_ativa'] == mes_sel) | 
-        (df['data de ativação'].isna())
-    ) & (df['status_dash'] != 'CANCELADO') & (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False))
     
-    df_f = df[mask_kanban & (df['parceiro'].isin(parc_sel))]
+    # KANBAN FILTRADO: ENTRANTE só se tiver data no mês. Os outros podem ser Pipeline (sem data).
+    mask_base = (df['tipo de contratação'].str.contains('NOVO|ADITIVO', case=False, na=False)) & (df['fila atual'].str.upper() != 'CANCELADO') & (df['parceiro'].isin(parc_sel))
     
-    filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "cls": "header-analise"},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "cls": "header-devolvido"},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "cls": "header-entrante"}
-    ]
     cols = st.columns(4)
+    filas = [
+        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "c": "header-pendente", "pipe": True},
+        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "c": "header-analise", "pipe": True},
+        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "c": "header-devolvido", "pipe": True},
+        {"t": "ENTRANTES", "s": ["ENTRANTE"], "c": "header-entrante", "pipe": False}
+    ]
+
     for i, f in enumerate(filas):
         with cols[i]:
-            df_fila = df_f[df_f['status_dash'].isin(f["s"])]
-            st.markdown(f"<div class='column-header {f['cls']}'>{f['t']}</div>", unsafe_allow_html=True)
+            if f["pipe"]: # Mostra o que ativou no mês + o que está sem data
+                mask_f = mask_base & df['status_dash'].isin(f["s"]) & ((df['mes_ref_ativa'] == mes_sel) | (df['data de ativação'].isna()))
+            else: # ENTRANTES: Mostra APENAS o que ativou no mês (Igual à Meta)
+                mask_f = mask_base & df['status_dash'].isin(f["s"]) & (df['mes_ref_ativa'] == mes_sel)
+            
+            df_fila = df[mask_f]
+            st.markdown(f"<div class='column-header {f['c']}'>{f['t']}</div>", unsafe_allow_html=True)
             with st.expander(f"Σ {int(df_fila['acessos'].sum())} | R$ {df_fila['preço oferta'].sum():,.2f}", expanded=True):
                 if not df_fila.empty:
-                    res = df_fila.groupby('razão social')[['acessos', 'preço oferta']].sum().reset_index().sort_values('acessos', ascending=False)
-                    st.dataframe(res.rename(columns={'acessos':'GROSS', 'preço oferta':'R$'}), hide_index=True, use_container_width=True)
-else:
-    st.warning("Aguardando bases...")
+                    st.dataframe(df_fila.groupby('razão social')[['acessos', 'preço oferta']].sum().reset_index().rename(columns={'acessos':'GROSS'}), hide_index=True)
