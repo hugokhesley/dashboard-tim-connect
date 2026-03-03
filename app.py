@@ -8,7 +8,7 @@ import os
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="TIM | Intelligence & Metas", layout="wide", page_icon="📊")
 
-# 2. CSS PREMIUM (UI/UX)
+# 2. CSS PREMIUM
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; }
@@ -49,52 +49,41 @@ MAP_STATUS = {
     'REANÁLISE APROVADA': 'CRÉDITO', 'REANÁLISE DE CRÉDITO': 'CRÉDITO', 'APROVAÇÃO P2B': 'EM ANÁLISE'
 }
 
-# 4. METAS (VOLUME = ACESSOS | RECEITA = PREÇO OFERTA)
-try:
-    meta_vol = st.secrets.get("META_VOL", 626.0)
-    meta_rec = st.secrets.get("META_REC", 21760.0)
-except Exception:
-    meta_vol = 626.0
-    meta_rec = 21760.0
+# 4. METAS CORPORATE (Mantém 626 / 21.760 até que você mude manualmente)
+meta_vol = 626.0
+meta_rec = 21760.0
 
-# 5. SIDEBAR E LÓGICA DE DADOS
+# 5. LÓGICA DE DADOS E DATA ATUAL
+fuso_br = pytz.timezone('America/Sao_Paulo')
+agora = datetime.now(fuso_br)
+mes_atual_str = agora.strftime('%m/%Y') # Ex: "03/2026"
+
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/TIM_logo.svg/1200px-TIM_logo.svg.png", width=80)
     st.title("Gestão de Dados")
+    arquivos_manuais = st.file_uploader("Upload Manual", type=['xlsx'], accept_multiple_files=True)
     
-    arquivos_manuais = st.file_uploader("Atualizar Bases (Opcional)", type=['xlsx'], accept_multiple_files=True)
-    
-    fuso_br = pytz.timezone('America/Sao_Paulo')
     bases_finais = []
-    origem_dados = ""
-    data_upload = ""
+    origem_dados, data_upload = "", ""
 
     if arquivos_manuais:
         bases_finais = arquivos_manuais
         origem_dados = "Upload Manual"
-        data_upload = datetime.now(fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
+        data_upload = agora.strftime('%d/%m/%Y às %H:%M:%S')
     else:
-        # Busca automática no GitHub
-        arquivos_locais = [f for f in os.listdir('.') if f.endswith('.xlsx') and not f.startswith('~$')]
+        arquivos_locais = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and not f.startswith('~$')]
         if arquivos_locais:
             bases_finais = arquivos_locais
-            origem_dados = "GitHub (Sincronizado)"
+            origem_dados = "GitHub (Auto)"
             mod_time = os.path.getmtime(arquivos_locais[0])
             data_upload = datetime.fromtimestamp(mod_time, fuso_br).strftime('%d/%m/%Y às %H:%M:%S')
 
 if bases_finais:
-    lista_dfs = []
-    for arquivo in bases_finais:
-        temp_df = pd.read_excel(arquivo)
-        temp_df.columns = temp_df.columns.str.strip().str.lower()
-        lista_dfs.append(temp_df)
-    
+    lista_dfs = [pd.read_excel(b).rename(columns=lambda x: x.strip().lower()) for b in bases_finais]
     df = pd.concat(lista_dfs, ignore_index=True)
     
-    # Tratamentos de Colunas
-    col_input, col_ativ = 'data de input', 'data de ativação'
-    col_vendedor, col_tipo = 'responsável venda', 'tipo de contratação'
-    
+    # Tratamentos básicos
+    col_input, col_ativ, col_vendedor, col_tipo = 'data de input', 'data de ativação', 'responsável venda', 'tipo de contratação'
     df['acessos'] = pd.to_numeric(df['acessos'], errors='coerce').fillna(0)
     df['preço oferta'] = pd.to_numeric(df['preço oferta'], errors='coerce').fillna(0)
     df['status_dash'] = df['fila atual'].map(MAP_STATUS).fillna('OUTROS')
@@ -103,72 +92,44 @@ if bases_finais:
     df['mes_ref'] = df[col_ativ].dt.strftime('%m/%Y')
 
     with st.sidebar:
-        meses = sorted([m for m in df['mes_ref'].dropna().unique()], reverse=True)
-        mes_sel = st.selectbox("Mês de Referência", meses if meses else ["02/2026"])
+        # Lógica para o Mês de Referência abrir no mês ATUAL automaticamente
+        meses_disponiveis = sorted(df['mes_ref'].dropna().unique().tolist(), reverse=True)
+        
+        # Se o mês atual estiver na base, ele é o padrão. Se não, pega o primeiro da lista.
+        idx_padrao = meses_disponiveis.index(mes_atual_str) if mes_atual_str in meses_disponiveis else 0
+        mes_sel = st.selectbox("Mês de Análise", meses_disponiveis, index=idx_padrao)
+        
         parc_sel = st.multiselect("Parceiros", sorted(df['parceiro'].unique()), default=df['parceiro'].unique())
         
-        tipos_disponiveis = sorted(df[col_tipo].dropna().unique().tolist())
-        tipo_sel_lateral = st.multiselect("Filtro Operacional", tipos_disponiveis, default=tipos_disponiveis)
-        
+        st.divider()
+        opcao_visao = st.radio("Visão Operacional:", ["Produtividade (NOVO/ADITIVO)", "Apenas RENEGOCIAÇÃO"])
+        tipo_sel_operacional = ["NOVO", "ADITIVO"] if "Produtividade" in opcao_visao else ["RENEGOCIAÇÃO"]
         st.success(f"📌 {origem_dados}\n🕒 {data_upload}")
 
     # 6. HEADER
-    data_ref = df[col_input].max().date()
-    data_ontem = data_ref - timedelta(days=1)
-    df_hoje = df[df[col_input].dt.date == data_ref]
-    df_ontem = df[df[col_input].dt.date == data_ontem]
+    st.markdown(f"<div class='header-premium'><h2>{mes_sel} - SMB PB</h2><div class='update-tag'>🕒 {origem_dados}: {data_upload}</div></div>", unsafe_allow_html=True)
 
-    c_logo, c_d1, c_d0, c_title = st.columns([1, 2, 2, 4.5])
-    with c_d1:
-        st.markdown(f"<div class='kpi-card'><small>D-1 ({data_ontem.strftime('%d/%m')})</small><br><b>{int(df_ontem['acessos'].sum())}</b><br><small>R$ {df_ontem['preço oferta'].sum():,.2f}</small></div>", unsafe_allow_html=True)
-    with c_d0:
-        st.markdown(f"<div class='kpi-card'><small>IMPUTE ({data_ref.strftime('%d/%m')}) 🟢</small><br><b>{int(df_hoje['acessos'].sum())}</b><br><small>R$ {df_hoje['preço oferta'].sum():,.2f}</small></div>", unsafe_allow_html=True)
-    with c_title:
-        st.markdown(f"""
-            <div class='header-premium'>
-                <h2 style='margin:0;'>{mes_sel} - SMB PB</h2>
-                <div class='update-tag'>🕒 {origem_dados}: {data_upload}</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    # 7. ATINGIMENTO CARTA META (REGRA RÍGIDA)
+    # 7. METAS (Fixas conforme solicitado)
     st.markdown("### 🎯 Atingimento Carta Meta (Corporate)")
-    df_meta_rigida = df[
-        (df['mes_ref'] == mes_sel) & 
-        (df[col_tipo].str.upper().isin(['ADITIVO', 'NOVO'])) &
-        (df['status_dash'] != 'CANCELADO')
-    ].copy()
+    df_meta = df[(df['mes_ref'] == mes_sel) & (df[col_tipo].str.upper().isin(['ADITIVO', 'NOVO'])) & (df['status_dash'] != 'CANCELADO')].copy()
+    real_vol, real_rec = df_meta['acessos'].sum(), df_meta['preço oferta'].sum()
 
-    real_vol = df_meta_rigida['acessos'].sum()
-    real_rec = df_meta_rigida['preço oferta'].sum()
-    
-    dia_atual = datetime.now(fuso_br).day if datetime.now(fuso_br).strftime('%m/%Y') == mes_sel else 28
-    tendencia_vol = (real_vol / dia_atual) * 28 if dia_atual > 0 else 0
-
-    m1, m2, m3 = st.columns(3)
+    m1, m2 = st.columns(2)
     with m1:
-        perc_vol = real_vol / meta_vol
-        st.metric("Volume Ativo (Acessos)", f"{int(real_vol)} / {int(meta_vol)}", f"{perc_vol:.1%}")
-        st.progress(min(perc_vol, 1.0))
+        st.metric("Volume Ativo (Acessos)", f"{int(real_vol)} / {int(meta_vol)}", f"{(real_vol/meta_vol):.1%}")
+        st.progress(min(real_vol/meta_vol, 1.0))
     with m2:
-        perc_rec = real_rec / meta_rec
-        st.metric("Receita Ativa (Preço Oferta)", f"R$ {real_rec:,.2f} / R$ {meta_rec:,.2f}", f"{perc_rec:.1%}")
-        st.progress(min(perc_rec, 1.0))
-    with m3:
-        cor_tend = "normal" if tendencia_vol >= meta_vol else "inverse"
-        st.metric("Forecast Final (Acessos)", f"{int(tendencia_vol)} Acessos", f"{tendencia_vol - meta_vol:+.0f}", delta_color=cor_tend)
+        st.metric("Receita Ativa (Preço Oferta)", f"R$ {real_rec:,.2f} / R$ {meta_rec:,.2f}", f"{(real_rec/meta_rec):.1%}")
+        st.progress(min(real_rec/meta_rec, 1.0))
 
-    # 8. FILAS KANBAN
+    # 8. KANBAN
     st.divider()
-    mask_operacional = (df['mes_ref'] == mes_sel) | ((df[col_ativ].isna()) & (df['status_dash'] != 'CANCELADO'))
-    df_f = df[mask_operacional & (df['parceiro'].isin(parc_sel)) & (df[col_tipo].isin(tipo_sel_lateral))].copy()
+    # Mask para o Kanban: mostramos o que é do mês OU o que ainda não ativou (esteja em fila)
+    mask_op = (df['mes_ref'] == mes_sel) | ((df[col_ativ].isna()) & (df['status_dash'] != 'CANCELADO'))
+    df_f = df[mask_op & (df['parceiro'].isin(parc_sel)) & (df[col_tipo].str.upper().isin(tipo_sel_operacional))].copy()
 
-    filas = [
-        {"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"},
-        {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "cls": "header-analise"},
-        {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "cls": "header-devolvido"},
-        {"t": "ENTRANTES", "s": ["ENTRANTE"], "cls": "header-entrante"}
-    ]
+    st.subheader(f"📊 Fluxo de Tramitação: {opcao_visao}")
+    filas = [{"t": "PENDENTE", "s": ["PRÉ-VENDA"], "cls": "header-pendente"}, {"t": "ANÁLISE", "s": ["EM ANÁLISE", "CRÉDITO"], "cls": "header-analise"}, {"t": "DEVOLVIDOS", "s": ["DEVOLVIDOS"], "cls": "header-devolvido"}, {"t": "ENTRANTES", "s": ["ENTRANTE"], "cls": "header-entrante"}]
     cols = st.columns(4)
     for i, f in enumerate(filas):
         with cols[i]:
@@ -181,17 +142,15 @@ if bases_finais:
 
     # 9. CALENDÁRIO
     st.divider()
-    st.subheader("🗓️ Produtividade Diária (Grupo Econômico)")
+    st.subheader(f"🗓️ Produtividade Diária: {opcao_visao}")
     df_liq = df_f[df_f['status_dash'] != 'CANCELADO'].copy()
     if not df_liq.empty:
         df_liq['dia'] = df_liq[col_input].dt.day
         cal = df_liq.pivot_table(index=col_vendedor, columns='dia', values='acessos', aggfunc='sum').fillna(0)
         cal['Total'] = cal.sum(axis=1)
-        
         def style_cal(val):
             if val > 0: return 'background-color: #064E3B; color: #10B981; font-weight: bold;'
             return 'background-color: #450A0A; color: #EF4444; opacity: 0.3;'
-        
         st.dataframe(cal.sort_values('Total', ascending=False).style.applymap(style_cal, subset=pd.IndexSlice[:, cal.columns != 'Total']).format(precision=0), use_container_width=True)
 else:
-    st.warning("⚠️ Nenhuma base (.xlsx) detetada no GitHub ou Upload.")
+    st.warning("⚠️ Aguardando bases (.xlsx) no GitHub ou Upload.")
